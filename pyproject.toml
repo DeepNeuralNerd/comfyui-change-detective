@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "comfyui-change-detective"
+version = "0.1.0"
+description = "Read-only diagnostics for a ComfyUI installation: scan, snapshot, compare, workflow and log checks. Answers: what changed, what to check first."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Srini" }]
+keywords = ["comfyui", "diagnostics", "snapshot", "diff", "cli"]
+classifiers = [
+  "Environment :: Console",
+  "Programming Language :: Python :: 3",
+  "Topic :: Utilities",
+]
+dependencies = []
+
+[project.scripts]
+comfy-detective = "comfy_detective.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

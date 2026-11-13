@@ -260,6 +260,9 @@ def version_tuple(v: str) -> Optional[tuple]:
     dev = m.group("dev") is not None
     if pre:
         pre_key = (_PRE_ALIASES[pre.lower()], int(m.group("pre_n") or 0))
+    elif dev and not has_post:
+        # canonical PEP 440: a pure dev release precedes every pre-release
+        pre_key = (-_INF, 0)
     else:
         pre_key = (_INF, 0)
     post_key = ((int(m.group("post_n") or m.group("post_d") or 0), 0)

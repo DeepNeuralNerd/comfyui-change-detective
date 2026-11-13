@@ -112,10 +112,16 @@ def _scan_environment(result: ScanResult, root: str) -> None:
     text, err = read_text(cfg_path, 8192)
     if text:
         for line in text.splitlines():
-            # pyvenv.cfg is a "key = value" file (per CPython venv docs)
+            # pyvenv.cfg is a "key = value" file (per CPython venv docs);
+            # uv-created venvs write version_info instead of version.
             if "=" in line:
                 k, _, v = line.partition("=")
                 env.pyvenv[k.strip().lower()] = v.strip()
+        vi = env.pyvenv.get("version") or env.pyvenv.get("version_info")
+        if vi:
+            m = re.match(r"^\d+\.\d+(?:\.\d+)?", str(vi))
+            if m:
+                env.pyvenv["version"] = m.group(0)
     else:
         env.pyvenv = {"_note": "pyvenv.cfg: %s" % (err or "missing")}
     sp = os.path.join(env.venv_dir, "Lib", "site-packages")

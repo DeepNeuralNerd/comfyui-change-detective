@@ -476,21 +476,21 @@ def _spec_satisfied(op: str, spec_ver: str, installed: str
     if op == "!=":
         return cmp_ != 0
     if op == "~=":
+        # PEP 440 compatible release: ~=X.Y.Z means >= X.Y.Z, < X.(Y+1);
+        # ~=X.Y means >= X.Y, < (X+1). Drop the final segment, bump the rest.
         low = compare_versions(installed, spec_ver)
-        if low is None or low < 0:
-            return False if low is not None else None
-        parts = spec_ver.split(".")
-        try:
-            upper = ".".join(parts[:-1]) if len(parts) >= 2 else parts[0]
-            bump = int(upper.split("-")[0].split("+")[0]) + 1 if parts \
-                else None
-            if len(parts) >= 2:
-                upper_ok = compare_versions(installed, "%d" % bump)
-            else:
-                upper_ok = None
-        except (ValueError, IndexError):
+        if low is None:
             return None
-        return None if upper_ok is None else upper_ok < 0
+        if low < 0:
+            return False
+        head = spec_ver.split(".")[:-1]
+        if len(head) < 1:
+            return None
+        try:
+            head[-1] = str(int(head[-1].split("-")[0].split("+")[0]) + 1)
+        except ValueError:
+            return None
+        return compare_versions(installed, ".".join(head)) < 0
     return None
 
 

@@ -163,9 +163,11 @@ ComfyUI root. No network access, no installs, no admin rights.
 ## Development
 
 ```powershell
-set PYTHONPATH=src;tests
-python -m unittest discover -s tests -t tests
+python run_tests.py
 ```
+
+(or manually: `set PYTHONPATH=src;tests` then
+`python -m unittest discover -s tests -t tests`)
 
 Tests build throwaway fixture trees in temp dirs; they never touch a real
 ComfyUI installation and never mutate one.

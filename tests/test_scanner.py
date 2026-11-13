@@ -6,7 +6,7 @@ from comfy_detective import diagnostics
 from comfy_detective.models import to_dict
 from comfy_detective.scanner import parse_extra_model_paths, scan_install
 from comfy_detective.util import ToolError
-from fixtures import TempDir, make_fake_comfy, tmpdir
+from fixtures import TempDir, make_fake_comfy, tmpdir, w
 
 
 class ScanTests(unittest.TestCase):
@@ -55,6 +55,16 @@ class ScanTests(unittest.TestCase):
         self.assertIn("checkpoints", self.scan["model_dirs"])
         loras = self.scan["model_dirs"].get("loras", [])
         self.assertTrue(any(p.endswith("Loras") for p in loras))
+
+    def test_pyvenv_version_info_normalized(self):
+        # uv-created venvs write version_info, not version
+        with tmpdir() as d:
+            make_fake_comfy(d, with_git=False)
+            w(os.path.join(d, "venv", "pyvenv.cfg"),
+              "home = X\nuv = 0.9.30\nversion_info = 3.12.12\n")
+            sd = to_dict(scan_install(d, allow_git_cmd=False))
+            self.assertEqual(sd["environment"]["pyvenv"]["version"],
+                             "3.12.12")
 
     def test_missing_root_raises(self):
         with self.assertRaises(ToolError) as ctx:

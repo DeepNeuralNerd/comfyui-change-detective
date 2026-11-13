@@ -107,6 +107,38 @@ class CompareTests(unittest.TestCase):
 
 
 class RequirementsTests(unittest.TestCase):
+    def test_compatible_release_operator(self):
+        from comfy_detective.diagnostics import _spec_satisfied
+        # ~=1.4.5 -> >=1.4.5, <1.5
+        self.assertTrue(_spec_satisfied("~=", "1.4.5", "1.4.5"))
+        self.assertTrue(_spec_satisfied("~=", "1.4.5", "1.4.9"))
+        self.assertFalse(_spec_satisfied("~=", "1.4.5", "1.5.0"))
+        self.assertFalse(_spec_satisfied("~=", "1.4.5", "1.4.4"))
+        self.assertFalse(_spec_satisfied("~=", "1.4.5", "2.0.0"))
+        # ~=1.4 -> >=1.4, <2
+        self.assertTrue(_spec_satisfied("~=", "1.4", "1.9"))
+        self.assertFalse(_spec_satisfied("~=", "1.4", "2.0"))
+        self.assertFalse(_spec_satisfied("~=", "1.4", "1.3"))
+        # >= lower bound must hold too: ~=1.4.5 with 1.4 fails low
+        self.assertFalse(_spec_satisfied("~=", "1.4.5", "1.4"))
+        # uncomparable forms stay unknown, never guessed
+        self.assertIsNone(_spec_satisfied("~=", "1.4.5", "weird??"))
+
+    def test_tilde_requirement_end_to_end(self):
+        with tmpdir() as d:
+            p = w(os.path.join(d, "requirements.txt"),
+                  "alpha~=1.4.5\nbeta~=2.1\n")
+            findings = diagnostics.requirement_findings(
+                p, "custom_node",
+                {"alpha": "1.5.0",   # violates ~=1.4.5 upper bound
+                 "beta": "2.9"})     # satisfies ~=2.1
+            titles = [f.title for f in findings]
+            self.assertTrue(any("does not satisfy declaration: alpha" in t
+                                for t in titles))
+            self.assertFalse(any("alpha" in t and "unknown" in t
+                                 for t in titles))
+            self.assertFalse(any("beta" in t for t in titles))
+
     def test_parse(self):
         reqs, skipped = diagnostics.parse_requirements(
             "Alpha [extra] == 1.2.3\n"

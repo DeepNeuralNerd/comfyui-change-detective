@@ -13,7 +13,7 @@ import os
 import re
 import subprocess
 import tempfile
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 
 class ToolError(Exception):
@@ -222,29 +222,57 @@ def canonical_pkg_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+_PRE_ALIASES = {"a": 0, "alpha": 0, "b": 1, "beta": 1,
+                "c": 2, "rc": 2, "pre": 2, "preview": 2}
+
+_VERSION_RE = re.compile(
+    r"^(?:(?P<epoch>\d+)!)?v?"
+    r"(?P<release>\d+(?:\.\d+)*)"
+    r"(?:[-_.]?(?P<pre>a|b|c|rc|alpha|beta|pre|preview)"
+    r"[-_.]?(?P<pre_n>\d+)?)?"
+    r"(?:[-_.]?(?P<post>post|rev|r)[-_.]?(?P<post_n>\d+)?"
+    r"|[-_.](?P<post_d>\d+))?"
+    r"(?:[-_.]?(?P<dev>dev)[-_.]?(?P<dev_n>\d+)?)?"
+    r"(?:\+(?P<local>[a-z0-9]+(?:[-_.][a-z0-9]+)*))?$",
+    re.IGNORECASE)
+
+
 def version_tuple(v: str) -> Optional[tuple]:
+    """PEP 440 sort key: (epoch, release, stage); None when not parseable.
+
+    Stage ordering for one release: .devN <aN/bN/rcN < final < postN
+    (dev attaches below its pre, above nothing for finals is not defined —
+    a bare dev stays earliest). A local "+label" is accepted but ignored
+    (conservative: it only refines equality, never ordering checks).
+    """
     if not v:
         return None
-    parts = [p for p in re.split(r"[._-]+", v.strip()) if p]
-    if not parts:
+    m = _VERSION_RE.match(v.strip())
+    if not m:
         return None
-    out: List[Any] = []
-    for part in parts:
-        m = re.match(r"^(\d+)(.*)$", part)
-        if m:
-            out.append(int(m.group(1)))
-            if m.group(2):
-                out.append(m.group(2))
-        elif re.match(r"^[A-Za-z]+$", part):
-            out.append(part)
-        else:
-            return None
-    return tuple(out)
+    epoch = int(m.group("epoch") or 0)
+    release = tuple(int(x) for x in m.group("release").split("."))
+    pre = m.group("pre")
+    post = m.group("post_n") or m.group("post_d")
+    has_post = m.group("post") is not None or m.group("post_d") is not None
+    dev = m.group("dev") is not None
+    dev_n = int(m.group("dev_n") or 0)
+    if has_post:
+        stage = (2, int(post), 1 if dev else 0)
+    elif pre:
+        stage = (0, _PRE_ALIASES[pre.lower()], int(m.group("pre_n") or 0),
+                 0 if dev else 1)
+    elif dev:
+        stage = (-1, dev_n, 0)
+    else:
+        stage = (1, 0, 1)
+    return (epoch, release, stage)
 
 
-def _sort_key(t: tuple) -> list:
-    # ints sort before str tokens deterministically without type errors
-    return [(0, x, "") if isinstance(x, int) else (1, 0, x) for x in t]
+def _pad(key: tuple, width: int) -> tuple:
+    rel = list(key[1])
+    rel += [0] * (width - len(rel))
+    return (key[0], tuple(rel), key[2])
 
 
 def compare_versions(a: str, b: str) -> Optional[int]:
@@ -252,7 +280,8 @@ def compare_versions(a: str, b: str) -> Optional[int]:
     ta, tb = version_tuple(a), version_tuple(b)
     if ta is None or tb is None:
         return None
-    ka, kb = _sort_key(ta), _sort_key(tb)
+    width = max(len(ta[1]), len(tb[1]))
+    ka, kb = _pad(ta, width), _pad(tb, width)
     return (ka > kb) - (ka < kb)
 
 

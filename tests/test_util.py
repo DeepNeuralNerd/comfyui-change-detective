@@ -14,6 +14,21 @@ class UtilTests(unittest.TestCase):
         self.assertEqual(util.compare_versions("2.0", "2.0"), 0)
         self.assertIsNone(util.compare_versions("weird??", "1.0"))
 
+    def test_compare_versions_pep440(self):
+        # prerelease sorts BELOW its final release (reviewer-reported case)
+        self.assertEqual(util.compare_versions("1.4.5rc1", "1.4.5"), -1)
+        self.assertEqual(util.compare_versions("1.4.5.dev0", "1.4.5"), -1)
+        self.assertEqual(util.compare_versions("1.4.5a1", "1.4.5rc1"), -1)
+        self.assertEqual(util.compare_versions("1.4.5b1", "1.4.5rc1"), -1)
+        self.assertEqual(util.compare_versions("1.4.5rc1", "1.4.5rc2"), -1)
+        self.assertEqual(util.compare_versions("1.4.5.post1", "1.4.5"), 1)
+        # implicit zeros and epochs
+        self.assertEqual(util.compare_versions("1.4", "1.4.0"), 0)
+        self.assertEqual(util.compare_versions("1!0.9", "2.0"), 1)
+        # local labels are accepted but ignored for ordering
+        self.assertEqual(util.compare_versions("1.0.0+cpu", "1.0.0"), 0)
+        self.assertIsNone(util.compare_versions("1.4.5rc1", "??"))
+
     def test_canonical_name(self):
         self.assertEqual(util.canonical_pkg_name("Comfy_UI-Foo.bar"),
                          "comfy-ui-foo-bar")

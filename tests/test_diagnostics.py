@@ -124,16 +124,32 @@ class RequirementsTests(unittest.TestCase):
         # uncomparable forms stay unknown, never guessed
         self.assertIsNone(_spec_satisfied("~=", "1.4.5", "weird??"))
 
+    def test_prerelease_edge_cases(self):
+        from comfy_detective.diagnostics import _spec_satisfied
+        # 1.4.5rc1 is BELOW the 1.4.5 release under PEP 440
+        self.assertFalse(_spec_satisfied("~=", "1.4.5", "1.4.5rc1"))
+        self.assertFalse(_spec_satisfied(">=", "1.4.5", "1.4.5rc1"))
+        self.assertFalse(_spec_satisfied("==", "1.4.5", "1.4.5rc1"))
+        self.assertTrue(_spec_satisfied("<", "1.4.5", "1.4.5rc1"))
+        self.assertTrue(_spec_satisfied("<=", "1.4.5", "1.4.5rc1"))
+        # wildcard equality matches prereleases within the prefix
+        self.assertTrue(_spec_satisfied("==", "1.4.*", "1.4.5rc1"))
+        # prerelease of the upper bound is still inside ~= range
+        self.assertTrue(_spec_satisfied("~=", "1.4.5", "1.5.0rc1"))
+
     def test_tilde_requirement_end_to_end(self):
         with tmpdir() as d:
             p = w(os.path.join(d, "requirements.txt"),
-                  "alpha~=1.4.5\nbeta~=2.1\n")
+                  "alpha~=1.4.5\nbeta~=2.1\ngamma~=1.0\n")
             findings = diagnostics.requirement_findings(
                 p, "custom_node",
-                {"alpha": "1.5.0",   # violates ~=1.4.5 upper bound
-                 "beta": "2.9"})     # satisfies ~=2.1
+                {"alpha": "1.5.0",    # violates ~=1.4.5 upper bound
+                 "beta": "2.9",       # satisfies ~=2.1
+                 "gamma": "1.0rc1"})  # prerelease BELOW 1.0: violation
             titles = [f.title for f in findings]
             self.assertTrue(any("does not satisfy declaration: alpha" in t
+                                for t in titles))
+            self.assertTrue(any("does not satisfy declaration: gamma" in t
                                 for t in titles))
             self.assertFalse(any("alpha" in t and "unknown" in t
                                  for t in titles))

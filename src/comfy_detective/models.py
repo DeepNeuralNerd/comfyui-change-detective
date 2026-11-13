@@ -101,6 +101,7 @@ class WorkflowInfo:
     edge_count: int = 0
     model_refs: List[ModelRef] = field(default_factory=list)
     coverage_notes: List[str] = field(default_factory=list)
+    subgraphs: List[Dict[str, str]] = field(default_factory=list)
 
 
 @dataclass

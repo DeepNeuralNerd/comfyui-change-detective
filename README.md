@@ -83,7 +83,11 @@ state then honestly reported as *unknown*).
 * Model directories: `models/*` plus `extra_model_paths.yaml` (both block
   and flow styles, including Stability Matrix's single-line mapping).
 * Supplied workflow JSONs (UI export or API export): node types, edges, and
-  model references resolved against the model directories. Exact-name hits
+  model references resolved against the model directories. Subgraphs
+  (`definitions.subgraphs`) are expanded: instance node types resolve to
+  their definitions, inner node types are checked, and file-like values in
+  unlabeled instance widgets are searched (category unknown — a non-match is
+  reported `unknown`, never `missing`). Exact-name hits
   and bounded subfolder searches only — ambiguous names are reported as
   ambiguous with all candidate locations listed, and "missing" is claimed
   only when the searched locations are listed for you to check.
@@ -106,9 +110,12 @@ Python files. Files that register nodes dynamically — including the newer
 `comfy_entrypoint`/`get_node_list` v3 API style — are counted and reported;
 coverage stays `possible`, never `missing`, while any file failed to parse or
 uses dynamic registration. `--objectinfo` (a saved `object_info` response)
-gives a reliable inventory when ComfyUI is reachable. Model inputs are
-matched by exact loader-name tables first, keyword hints second, and widget
-values in UI exports are explicitly *not* interpreted.
+gives a reliable inventory when ComfyUI is reachable; an unusable dump
+(unreadable, invalid, over the size cap) is always reported, never silently
+ignored. Model inputs are
+matched by exact loader-name tables first, keyword hints second; unlabeled
+widget values in UI exports are not interpreted (exception: subgraph instance
+widgets, searched as category-unknown file candidates).
 
 ### Logs
 

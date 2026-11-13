@@ -16,6 +16,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import warnings
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -95,6 +96,12 @@ _TOTAL_SCAN_CAP = 4000
 
 _WILDCARD_CHARS = ("*", "?", "[")
 
+# file-name suffixes typical for model weights (used for unlabeled
+# subgraph widget values; never claims "missing" on its own)
+_MODEL_FILE_RE = re.compile(
+    r"\.(safetensors|ckpt|pt|pth|bin|onnx|gguf|torchscript|lora|safetensors)$",
+    re.IGNORECASE)
+
 
 # --------------------------------------------------------------------------
 # workflow parsing
@@ -118,12 +125,21 @@ def parse_workflow(path: str) -> WorkflowInfo:
     if fmt == "ui":
         nodes = data if isinstance(data, list) else data.get("nodes", [])
         seen: Set[str] = set()
+        sub_map: Dict[str, dict] = {}
+        if isinstance(data, dict) and isinstance(data.get("definitions"), dict):
+            for s in data["definitions"].get("subgraphs") or []:
+                if isinstance(s, dict) and isinstance(s.get("id"), str):
+                    sub_map[s["id"]] = s
+                    wf.subgraphs.append({"id": s["id"],
+                                         "name": str(s.get("name") or "")})
+        file_like: Set[str] = set()
         for node in nodes:
             if not isinstance(node, dict):
                 continue
             wf.node_count += 1
             ntype = node.get("type")
-            if isinstance(ntype, str) and ntype:
+            is_sub = isinstance(ntype, str) and ntype in sub_map
+            if isinstance(ntype, str) and ntype and not is_sub:
                 seen.add(ntype)
             inputs = node.get("inputs")
             if isinstance(inputs, list):
@@ -133,15 +149,51 @@ def parse_workflow(path: str) -> WorkflowInfo:
                     if isinstance(ent, dict):
                         _collect_ref(wf, ntype or "", ent.get("name"),
                                      ent.get("value"))
+            if is_sub:
+                # instance widget values are the real (overridden) settings
+                for v in node.get("widgets_values") or []:
+                    if isinstance(v, str):
+                        t = v.strip()
+                        if 0 < len(t) <= 500 and _MODEL_FILE_RE.search(t):
+                            file_like.add(t)
+        for sub in sub_map.values():
+            for node in sub.get("nodes") or []:
+                if not isinstance(node, dict):
+                    continue
+                ntype = node.get("type")
+                if isinstance(ntype, str) and ntype and ntype not in sub_map:
+                    seen.add(ntype)
+                inputs = node.get("inputs")
+                if isinstance(inputs, list):
+                    for ent in inputs:
+                        if isinstance(ent, dict):
+                            _collect_ref(wf, ntype or "", ent.get("name"),
+                                         ent.get("value"))
         wf.node_classes = sorted(seen)
+        known_vals = {r.value for r in wf.model_refs}
+        for val in sorted(file_like):
+            if val in known_vals:
+                continue
+            wf.model_refs.append(ModelRef(
+                value=val, node_type="subgraph-widget", input_name=None,
+                category=None,
+                notes=["value read from an unlabeled subgraph widget; "
+                       "searched without category"]))
         if isinstance(data, dict) and isinstance(data.get("widgets_values"), list) \
                 and any(isinstance(n, dict) and "widgets_values" in n for n in nodes):
-            pass  # per-node positional widget values: not interpretable
+            pass  # per-node positional widget settings: not interpretable
         if any(isinstance(n, dict) and "widgets_values" in n for n in nodes if isinstance(n, dict)):
             wf.coverage_notes.append(
                 "widgets_values (positional widget settings) are stored without "
                 "input names and are not interpreted; only labeled values were "
                 "checked for model references.")
+        if sub_map:
+            wf.coverage_notes.append(
+                "subgraphs: %d definition(s) parsed; instance widget values "
+                "were searched as model-file candidates (category unknown), "
+                "inner node types were included in the node check; inner "
+                "placeholder defaults were not treated as references."
+                % len(sub_map))
     elif fmt == "api":
         seen = set()
         for _nid, node in data.items():
@@ -303,7 +355,7 @@ def _candidate_dirs(ref: ModelRef, model_dirs: Dict[str, List[str]]
             if k not in seen:
                 seen.add(k)
                 dirs.append(d)
-    return dirs[:_MAX_SEARCH_DIRS], category_known
+    return dirs, category_known   # full list; callers cap deep search only
 
 
 def _resolve_ref_against_dirs(ref: ModelRef, model_dirs: Dict[str, List[str]]) -> None:
@@ -316,26 +368,31 @@ def _resolve_ref_against_dirs(ref: ModelRef, model_dirs: Dict[str, List[str]]) -
         return
     ref.searched = list(dirs)
     matches: List[str] = []
-    budget_left = _TOTAL_SCAN_CAP
-    all_searchable = True
     normed = ref.value.replace("/", os.sep).replace("\\", os.sep)
     has_subpath = ("/" in ref.value or "\\" in ref.value)
     want_rel = os.path.normcase(os.path.normpath(normed)) if has_subpath else None
     want_base = os.path.normcase(os.path.basename(normed))
+    # 1) exact joins are cheap: run them against EVERY candidate dir so the
+    #    deep-search cap can never hide a real match.
     for d in dirs:
         exact = os.path.join(d, *normed.split(os.sep))
         if os.path.isfile(exact):
             matches.append(exact)
-            continue
-        if budget_left <= 0:
-            all_searchable = False
-            continue
-        found, used, readable = _shallow_search(d, want_rel if has_subpath else None,
-                                                want_base, budget_left)
-        budget_left -= used
-        matches.extend(found)
-        if not readable:
-            all_searchable = False
+    # 2) no exact hit: bounded deep search (entry budget + dir cap).
+    budget_left = _TOTAL_SCAN_CAP
+    all_searchable = True
+    if not matches:
+        for d in dirs[:_MAX_SEARCH_DIRS]:
+            if budget_left <= 0:
+                all_searchable = False
+                continue
+            found, used, readable = _shallow_search(d, want_rel if has_subpath
+                                                    else None,
+                                                    want_base, budget_left)
+            budget_left -= used
+            matches.extend(found)
+            if not readable:
+                all_searchable = False
     matches = list(dict.fromkeys(matches))
     if len(matches) == 1:
         ref.status = "found"
@@ -466,6 +523,7 @@ def build_node_inventory(root: str, extra_objectinfo: Optional[str] = None
             types.update(got)
             meta["object_info_file"] = os.path.abspath(extra_objectinfo)
         else:
+            meta["object_info_error"] = err
             meta["notes"].append("object-info file could not be used: %s" % err)
     return {"types": types, "meta": meta}
 
@@ -566,8 +624,18 @@ def _node_classes_in_file(path: str) -> Tuple[Set[str], str]:
     return types, "ok"
 
 
+_MAX_OBJECTINFO_BYTES = 256 * 1024 * 1024
+
+
 def _types_from_object_info(path: str) -> Tuple[Optional[Set[str]], str]:
-    text, err = read_text(path, 16 * 1024 * 1024)
+    try:
+        size = os.path.getsize(path)
+    except OSError as exc:
+        return None, "unreadable: %s" % exc
+    if size > _MAX_OBJECTINFO_BYTES:
+        return None, "file is %d MB (cap %d MB)" % (
+            size // (1024 * 1024), _MAX_OBJECTINFO_BYTES // (1024 * 1024))
+    text, err = read_text(path, _MAX_OBJECTINFO_BYTES)
     if text is None:
         return None, err or "unreadable"
     try:
@@ -612,18 +680,25 @@ def workflow_findings(wf: WorkflowInfo, inventory: Optional[Dict[str, Any]]
         if missing:
             partial = bool(meta.get("dynamic_mapping_files")) or \
                 bool(meta.get("files_failed")) or bool(meta.get("notes"))
+            extra = ""
+            if meta.get("object_info_file"):
+                extra = "; supplemented by object_info dump"
+            elif meta.get("object_info_error"):
+                extra = ("; supplied object_info dump could NOT be used: %s"
+                         % meta["object_info_error"])
             findings.append(Finding(
                 title="%d node type(s) not found in the installation's static node inventory"
                       % len(missing),
                 category="workflow",
                 certainty="possible" if partial else "observed",
                 evidence="not in inventory: %s. Inventory built from %d files "
-                         "(%d unreadable, %d with non-literal NODE_CLASS_MAPPINGS)%s"
+                         "(%d unreadable, %d with non-literal NODE_CLASS_MAPPINGS)%s%s"
                          % (", ".join(missing[:15]), meta["files_parsed"],
                             meta["files_failed"],
                             len(meta["dynamic_mapping_files"]),
                             "; coverage is partial - some packages register "
-                            "nodes dynamically" if partial else ""),
+                            "nodes dynamically" if partial else "",
+                            extra),
                 why_it_matters="A workflow referencing node types the "
                                "installation does not provide will fail to "
                                "load those nodes.",

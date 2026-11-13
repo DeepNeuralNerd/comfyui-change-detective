@@ -4,7 +4,42 @@ import tempfile
 import unittest
 
 from comfy_detective import workflow as wf
+from comfy_detective.models import ModelRef, WorkflowInfo
 from fixtures import TempDir, make_fake_comfy, tmpdir, w, wf_api, wf_ui
+
+
+class InventoryObjectInfoTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = TempDir()
+        self.d = self.tmp.name
+        self.root = os.path.join(self.d, "comfy")
+        make_fake_comfy(self.root, with_git=False)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_dump_merged(self):
+        dump = w(os.path.join(self.d, "oi.json"),
+                 '{"Foo.Bar": {}, "Baz": {}}')
+        inv = wf.build_node_inventory(self.root, extra_objectinfo=dump)
+        self.assertIn("Foo.Bar", inv["types"])
+        self.assertIn("Baz", inv["types"])
+        self.assertTrue(inv["meta"]["object_info_file"])
+        self.assertNotIn("object_info_error", inv["meta"])
+
+    def test_oversized_dump_fails_visibly(self):
+        # must never be silently ignored: an unusable dump is recorded
+        dump = w(os.path.join(self.d, "oi.json"),
+                 '{"Foo.Bar": {}, "Baz": {}}')
+        old = wf._MAX_OBJECTINFO_BYTES
+        wf._MAX_OBJECTINFO_BYTES = 10
+        try:
+            inv = wf.build_node_inventory(self.root, extra_objectinfo=dump)
+            self.assertIsNone(inv["meta"]["object_info_file"])
+            self.assertIn("cap", inv["meta"]["object_info_error"])
+            self.assertNotIn("Foo.Bar", inv["types"])
+        finally:
+            wf._MAX_OBJECTINFO_BYTES = old
 
 
 class ParseTests(unittest.TestCase):
@@ -34,6 +69,45 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(info.node_count, 2)
         refs = {r.value: r for r in info.model_refs}
         self.assertIn("sub/nested.safetensors", refs)
+
+    def test_subgraphs_ui(self):
+        p = os.path.join(self.d, "sub.json")
+        w(p, json.dumps({
+            "nodes": [
+                {"id": 1, "type": "sg-1",
+                 "widgets_values": ["m/x.safetensors", "euler"]},
+            ],
+            "links": [],
+            "definitions": {"subgraphs": [
+                {"id": "sg-1", "name": "S", "nodes": [
+                    {"id": 10, "type": "UNETLoader",
+                     "inputs": [], "widgets_values": ["default.safetensors"]},
+                    {"id": 11, "type": "SomePackNode", "inputs": []},
+                ]}]},
+        }))
+        info = wf.parse_workflow(p)
+        self.assertIn("UNETLoader", info.node_classes)
+        self.assertIn("SomePackNode", info.node_classes)
+        self.assertNotIn("sg-1", info.node_classes)
+        self.assertEqual([s["id"] for s in info.subgraphs], ["sg-1"])
+        vals = {r.value for r in info.model_refs}
+        self.assertIn("m/x.safetensors", vals)
+        self.assertNotIn("default.safetensors", vals)  # placeholder ignored
+        self.assertTrue(any("subgraph" in n for n in info.coverage_notes))
+
+    def test_unknown_category_searches_beyond_dir_cap(self):
+        # exact joins must run against every dir, not just the first 12
+        with tmpdir() as d:
+            dirs = {}
+            for i in range(20):
+                p = os.path.join(d, "cat%02d" % i)
+                os.makedirs(p)
+                dirs["c%02d" % i] = [p]
+            w(os.path.join(dirs["c19"][0], "needle.safetensors"), "x")
+            ref = ModelRef(value="needle.safetensors", node_type="t")
+            wf.resolve_workflow_models(
+                WorkflowInfo(path="x", model_refs=[ref]), dirs)
+            self.assertEqual(ref.status, "found")
 
     def test_invalid_json_message(self):
         p = w(os.path.join(self.d, "bad.json"), '{"nodes": [1, ')

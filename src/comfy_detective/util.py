@@ -222,6 +222,8 @@ def canonical_pkg_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+_INF = float("inf")
+
 _PRE_ALIASES = {"a": 0, "alpha": 0, "b": 1, "beta": 1,
                 "c": 2, "rc": 2, "pre": 2, "preview": 2}
 
@@ -238,12 +240,13 @@ _VERSION_RE = re.compile(
 
 
 def version_tuple(v: str) -> Optional[tuple]:
-    """PEP 440 sort key: (epoch, release, stage); None when not parseable.
+    """PEP 440 sort key: (epoch, release, pre_key, post_key, dev_key).
 
-    Stage ordering for one release: .devN <aN/bN/rcN < final < postN
-    (dev attaches below its pre, above nothing for finals is not defined —
-    a bare dev stays earliest). A local "+label" is accepted but ignored
-    (conservative: it only refines equality, never ordering checks).
+    Follows the canonical PEP 440 ordering: dev sorts BEFORE the release it
+    attaches to (1.0.dev1 < 1.0, 1.0.post1.dev1 < 1.0.post1,
+    1.0rc1.dev1 < 1.0rc1), aN/bN/rcN < final < postN, and missing parts use
+    +/- infinity sentinels. None (not comparable) when unparseable. A local
+    "+label" is accepted but ignored (it refines equality only).
     """
     if not v:
         return None
@@ -253,26 +256,16 @@ def version_tuple(v: str) -> Optional[tuple]:
     epoch = int(m.group("epoch") or 0)
     release = tuple(int(x) for x in m.group("release").split("."))
     pre = m.group("pre")
-    post = m.group("post_n") or m.group("post_d")
     has_post = m.group("post") is not None or m.group("post_d") is not None
     dev = m.group("dev") is not None
-    dev_n = int(m.group("dev_n") or 0)
-    if has_post:
-        stage = (2, int(post), 1 if dev else 0)
-    elif pre:
-        stage = (0, _PRE_ALIASES[pre.lower()], int(m.group("pre_n") or 0),
-                 0 if dev else 1)
-    elif dev:
-        stage = (-1, dev_n, 0)
+    if pre:
+        pre_key = (_PRE_ALIASES[pre.lower()], int(m.group("pre_n") or 0))
     else:
-        stage = (1, 0, 1)
-    return (epoch, release, stage)
-
-
-def _pad(key: tuple, width: int) -> tuple:
-    rel = list(key[1])
-    rel += [0] * (width - len(rel))
-    return (key[0], tuple(rel), key[2])
+        pre_key = (_INF, 0)
+    post_key = ((int(m.group("post_n") or m.group("post_d") or 0), 0)
+                if has_post else (-_INF, 0))
+    dev_key = ((int(m.group("dev_n") or 0), 0) if dev else (_INF, 0))
+    return (epoch, release, pre_key, post_key, dev_key)
 
 
 def compare_versions(a: str, b: str) -> Optional[int]:
@@ -281,7 +274,13 @@ def compare_versions(a: str, b: str) -> Optional[int]:
     if ta is None or tb is None:
         return None
     width = max(len(ta[1]), len(tb[1]))
-    ka, kb = _pad(ta, width), _pad(tb, width)
+
+    def pad(key: tuple) -> tuple:
+        rel = list(key[1])
+        rel += [0] * (width - len(rel))
+        return (key[0], tuple(rel)) + key[2:]
+
+    ka, kb = pad(ta), pad(tb)
     return (ka > kb) - (ka < kb)
 
 

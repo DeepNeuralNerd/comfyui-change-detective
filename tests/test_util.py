@@ -29,6 +29,21 @@ class UtilTests(unittest.TestCase):
         self.assertEqual(util.compare_versions("1.0.0+cpu", "1.0.0"), 0)
         self.assertIsNone(util.compare_versions("1.4.5rc1", "??"))
 
+    def test_compare_versions_post_dev(self):
+        # PEP 440: a dev release precedes the release it attaches to,
+        # and dev numbers ascend
+        self.assertEqual(util.compare_versions("1.0.post1.dev1",
+                                               "1.0.post1"), -1)
+        self.assertEqual(util.compare_versions("1.0.post1.dev1",
+                                               "1.0.post1.dev2"), -1)
+        self.assertEqual(util.compare_versions("1.0.post1.dev1",
+                                               "1.0.post1.dev1"), 0)
+        self.assertEqual(util.compare_versions("1.0rc1.dev1", "1.0rc1"), -1)
+        self.assertEqual(util.compare_versions("1.0.dev1", "1.0a1"), -1)
+        self.assertEqual(util.compare_versions("1.0.post1.dev1",
+                                               "1.0.post2"), -1)
+        self.assertEqual(util.compare_versions("1.0", "1.0.post1.dev1"), -1)
+
     def test_canonical_name(self):
         self.assertEqual(util.canonical_pkg_name("Comfy_UI-Foo.bar"),
                          "comfy-ui-foo-bar")

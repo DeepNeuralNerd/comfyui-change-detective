@@ -27,6 +27,23 @@ class InventoryObjectInfoTests(unittest.TestCase):
         self.assertTrue(inv["meta"]["object_info_file"])
         self.assertNotIn("object_info_error", inv["meta"])
 
+    def test_unusable_dump_reported_even_when_nothing_missing(self):
+        # every node type known statically: the dump problem must STILL appear
+        p = w(os.path.join(self.d, "wf.json"), json.dumps({
+            "nodes": [{"id": 1, "type": "KSampler", "inputs": []},
+                      {"id": 2, "type": "CheckpointLoaderSimple",
+                       "inputs": []}],
+            "links": []}))
+        info = wf.parse_workflow(p)
+        bad = w(os.path.join(self.d, "bad_oi.json"), "{not json")
+        inv = wf.build_node_inventory(self.root, extra_objectinfo=bad)
+        findings = wf.workflow_findings(info, inv)
+        titles = [f.title for f in findings]
+        self.assertTrue(any("object_info dump could not be used" in t
+                            for t in titles), titles)
+        self.assertFalse(any("not found in the installation's static node "
+                             "inventory" in t for t in titles), titles)
+
     def test_oversized_dump_fails_visibly(self):
         # must never be silently ignored: an unusable dump is recorded
         dump = w(os.path.join(self.d, "oi.json"),

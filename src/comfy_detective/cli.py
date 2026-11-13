@@ -363,6 +363,14 @@ def _cmd_workflow_check(args: argparse.Namespace) -> int:
             evidence="no --comfyui path given: node-type presence and model "
                      "file existence were not checked",
             next_check="Re-run with --comfyui <path>."))
+        if args.objectinfo:
+            findings.append(Finding(
+                title="Supplied object_info dump was not used",
+                category="coverage", certainty="observed",
+                evidence="an object_info dump was passed but no --comfyui "
+                         "path, so no node inventory was built and the dump "
+                         "was never read",
+                next_check="Re-run with --comfyui <path> to use the dump."))
     log_info = None
     if args.log:
         log_info = log_analysis.analyze_log(

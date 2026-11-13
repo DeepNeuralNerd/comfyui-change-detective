@@ -524,6 +524,7 @@ def build_node_inventory(root: str, extra_objectinfo: Optional[str] = None
             meta["object_info_file"] = os.path.abspath(extra_objectinfo)
         else:
             meta["object_info_error"] = err
+            meta["object_info_path"] = os.path.abspath(extra_objectinfo)
             meta["notes"].append("object-info file could not be used: %s" % err)
     return {"types": types, "meta": meta}
 
@@ -675,6 +676,19 @@ def workflow_findings(wf: WorkflowInfo, inventory: Optional[Dict[str, Any]]
     if inventory is not None:
         known = inventory["types"]
         meta = inventory["meta"]
+        if meta.get("object_info_error"):
+            findings.append(Finding(
+                title="Supplied object_info dump could not be used",
+                category="coverage", certainty="observed",
+                evidence="%s: %s" % (meta.get("object_info_path")
+                                     or "(path not recorded)",
+                                     meta["object_info_error"]),
+                why_it_matters="Node-type checks ran on the static inventory "
+                               "only, so coverage is weaker than requested.",
+                next_check="Re-export object_info from the running server "
+                           "(GET /object_info) and retry; corrupt or "
+                           "oversized dumps are rejected with the reason "
+                           "shown here."))
         missing = [t for t in wf.node_classes
                    if t not in known and t not in PSEUDO_NODE_TYPES]
         if missing:
@@ -683,9 +697,6 @@ def workflow_findings(wf: WorkflowInfo, inventory: Optional[Dict[str, Any]]
             extra = ""
             if meta.get("object_info_file"):
                 extra = "; supplemented by object_info dump"
-            elif meta.get("object_info_error"):
-                extra = ("; supplied object_info dump could NOT be used: %s"
-                         % meta["object_info_error"])
             findings.append(Finding(
                 title="%d node type(s) not found in the installation's static node inventory"
                       % len(missing),

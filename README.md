@@ -1,5 +1,7 @@
 # ComfyUI Change Detective
 
+[![release](https://img.shields.io/github/v/release/DeepNeuralNerd/comfyui-change-detective?label=release&color=3E9EA0)](https://github.com/DeepNeuralNerd/comfyui-change-detective/releases) [![downloads](https://img.shields.io/github/downloads/DeepNeuralNerd/comfyui-change-detective/total?label=downloads&color=3E8E6A)](https://github.com/DeepNeuralNerd/comfyui-change-detective/releases)
+
 A small, **read-only** diagnostic CLI for one question:
 
 > *"This workflow used to work. What changed, and what should I check first?"*
